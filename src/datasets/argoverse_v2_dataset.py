@@ -185,7 +185,7 @@ class ArgoverseV2Dataset(Dataset):
         for raw_file_name in tqdm(self.raw_file_names):
             df = pd.read_parquet(os.path.join(self.raw_dir, raw_file_name, f'scenario_{raw_file_name}.parquet'))
             map_dir = Path(self.raw_dir) / raw_file_name
-            map_path = map_dir / sorted(map_dir.glob('log_map_archive_*.json'))[0]
+            map_path = sorted(map_dir.glob('log_map_archive_*.json'))[0]
             map_data = read_json_file(map_path)
             centerlines = {lane_segment['id']: Polyline.from_json_data(lane_segment['centerline'])
                            for lane_segment in map_data['lane_segments'].values()}

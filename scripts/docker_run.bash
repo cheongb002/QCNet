@@ -2,7 +2,7 @@
 
 DRIVE=$1
 
-VOLUMES="--volume=${PWD}/misc:/home/$(whoami)/misc
+VOLUMES="--volume=${PWD}/assets:/home/$(whoami)/assets
         --volume=${PWD}/src:/home/$(whoami)/src
         --volume=${PWD}/results:/home/$(whoami)/results
         --volume=${DRIVE}:/home/$(whoami)/data"

@@ -35,9 +35,7 @@ COPY requirements.txt requirements.txt
 RUN pip3 install --upgrade pip
 RUN pip3 install -r requirements.txt && \
     rm requirements.txt
-
-#? Install PyTorch
-RUN pip3 install torch torchvision
+RUN pip3 install torch-scatter torch-cluster -f https://data.pyg.org/whl/torch-2.2.2%2Bcu121.html
 
 USER $USERNAME
 WORKDIR /home/$USERNAME

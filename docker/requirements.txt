@@ -1,0 +1,16 @@
+torch
+torchvision
+lightning
+torch-geometric
+argcomplete==3.2.3
+av==11.0.0
+av2
+colorlog==6.8.2
+kornia==0.7.1
+llvmlite==0.41.1
+nox==2024.3.2
+numba==0.58.1
+pandas==2.0.3
+pyproj==3.5.0
+tzdata==2024.1
+universal-pathlib==0.2.2
