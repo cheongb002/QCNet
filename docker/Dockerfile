@@ -37,5 +37,8 @@ RUN pip3 install -r requirements.txt && \
     rm requirements.txt
 RUN pip3 install torch-scatter torch-cluster -f https://data.pyg.org/whl/torch-2.2.2%2Bcu121.html
 
+#? Add shortcut for jupyter notebook
+RUN echo "alias jn='jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root'" >> /home/$USERNAME/.bashrc
+
 USER $USERNAME
 WORKDIR /home/$USERNAME

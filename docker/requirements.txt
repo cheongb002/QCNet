@@ -14,3 +14,4 @@ pandas==2.0.3
 pyproj==3.5.0
 tzdata==2024.1
 universal-pathlib==0.2.2
+notebook

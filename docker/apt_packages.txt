@@ -9,3 +9,4 @@ python3-wheel
 python3-opencv
 python3-tk
 ninja-build
+cargo
