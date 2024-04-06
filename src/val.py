@@ -32,12 +32,14 @@ if __name__ == '__main__':
     parser.add_argument('--persistent_workers', type=bool, default=True)
     parser.add_argument('--accelerator', type=str, default='auto')
     parser.add_argument('--devices', type=int, default=1)
+    parser.add_argument('--std', type=float, default=1.0)
     parser.add_argument('--ckpt_path', type=str, required=True)
     args = parser.parse_args()
 
     model = {
         'QCNet': QCNet,
     }[args.model].load_from_checkpoint(checkpoint_path=args.ckpt_path)
+    model.noise_std = args.std
     val_dataset = {
         'argoverse_v2': ArgoverseV2Dataset,
     }[model.dataset](root=args.root, split='val',

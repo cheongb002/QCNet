@@ -33,6 +33,7 @@ from metrics import minFDE
 from metrics import minFHE
 from modules import QCNetDecoder
 from modules import QCNetEncoder
+from utils import wrap_angle
 
 try:
     from av2.datasets.motion_forecasting.eval.submission import ChallengeSubmission
@@ -152,6 +153,7 @@ class QCNet(pl.LightningModule):
         self.MR = MR(max_guesses=6)
 
         self.test_predictions = dict()
+        self.noise_std: float = 1.0
 
     def forward(self, data: HeteroData):
         scene_enc = self.encoder(data)
@@ -209,10 +211,24 @@ class QCNet(pl.LightningModule):
     def validation_step(self,
                         data,
                         batch_idx):
+        del batch_idx
+
         if isinstance(data, Batch):
             data['agent']['av_index'] += data['agent']['ptr'][:-1]
         reg_mask = data['agent']['predict_mask'][:, self.num_historical_steps:]
         cls_mask = data['agent']['predict_mask'][:, -1]
+        
+        #? Add random noise to future position, heading, and velocity of agents
+        for key in ('position', 'heading', 'velocity'):
+            shape = list(data['agent'][key].shape)
+            shape[1] = self.num_historical_steps
+            noise = torch.normal(mean=torch.zeros(shape), std=self.noise_std).to(self.device)
+            data['agent'][key][:, :self.num_historical_steps, ...] += noise
+            if key == 'heading':
+                #? Wrap the angle to [-pi, pi] using wrap_angle
+                data['agent'][key][:, :self.num_historical_steps] = \
+                    wrap_angle(data['agent'][key][:, :self.num_historical_steps])
+        
         pred = self(data)
         if self.output_head:
             traj_propose = torch.cat([pred['loc_propose_pos'][..., :self.output_dim],
