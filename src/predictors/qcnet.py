@@ -251,6 +251,134 @@ class QCNet(pl.LightningModule):
         best_mode = l2_norm.argmin(dim=-1)
         traj_propose_best = traj_propose[torch.arange(traj_propose.size(0)), best_mode]
         traj_refine_best = traj_refine[torch.arange(traj_refine.size(0)), best_mode]
+
+
+        def check_out_of_map(scenario_id, data, target_agent_traj, visualize=False):
+            '''
+                target_agent_traj: shape [60, 2]
+            '''
+
+            from av2.map.map_api import ArgoverseStaticMap
+            from pathlib import Path
+            import matplotlib.pyplot as plt
+            import numpy as np
+            static_map_path = (Path(f"/home/letian/UofTCourse/Motion_Planning/project/val/raw/{scenario_id}") / f"log_map_archive_{scenario_id}.json")
+            static_map = ArgoverseStaticMap.from_json(static_map_path)
+
+            # create polygon        
+            paths = []
+            from matplotlib.path import Path
+            for drivable_area in static_map.vector_drivable_areas.values():
+                for polygon in [drivable_area.xyz]:
+                    paths.append(Path(polygon[:,:2]))
+
+            # transform the target_agent trajectory to the map coodinates
+            cur_heading = data['agent']['heading'][eval_mask][:,50:51].item()
+            cur_pos = data['agent']['position'][eval_mask][0,50:51,:2].cpu().numpy()
+            # import pdb; pdb.set_trace()
+            transform_matrix = np.array([
+                [np.cos(cur_heading), -np.sin(cur_heading)],
+                [np.sin(cur_heading), np.cos(cur_heading)]
+            ])
+            target_agent_traj_in_map = (transform_matrix @ target_agent_traj.T).T + cur_pos
+
+            # check if the traj is out of drivable area
+            out_of_drivable_area = False
+            for one_point in target_agent_traj_in_map:
+                if not any(path.contains_point(one_point) for path in paths):
+                    out_of_drivable_area = True
+
+            # visualize
+            if visualize:
+                for drivable_area in static_map.vector_drivable_areas.values():
+                    for polygon in [drivable_area.xyz]:
+                        plt.fill(polygon[:, 0], polygon[:, 1], color='0')
+                plt.plot(target_agent_traj_in_map[:,0], target_agent_traj_in_map[:,1])
+                plt.show(block=False)
+                import pdb; pdb.set_trace()
+
+            return out_of_drivable_area
+        def check_small_turning_radius(trajectory, radius_threhold=3.5, minimum_radius=True):
+            import numpy as np
+            def calculate_curvature(x, y):
+                dx_dt = np.gradient(x)
+                dy_dt = np.gradient(y)
+                d2x_dt2 = np.gradient(dx_dt)
+                d2y_dt2 = np.gradient(dy_dt)
+                curvature = (dx_dt * d2y_dt2 - dy_dt * d2x_dt2) / ((dx_dt ** 2 + dy_dt ** 2) ** 1.5)
+                return curvature
+            def calculate_turning_radius(curvature):
+                return 1.0 / curvature
+
+            # Example trajectory (replace with your actual trajectory)
+            # x = np.array([0, 1, 2, 3, 4])
+            # y = np.array([0, 1, 0, -1, 0])
+            x = trajectory[:, 0]
+            y = trajectory[:, 1]
+
+            # Calculate curvature
+            curvature = calculate_curvature(x, y)
+
+            # Calculate turning radius
+            turning_radius = calculate_turning_radius(curvature)
+
+            # Print turning radius at each point along the trajectory
+            for i, radius in enumerate(turning_radius):
+                print(f"Point {i + 1}: Turning radius = {radius}")
+
+            # You can also calculate the average turning radius if needed
+            average_radius = np.mean(np.abs(turning_radius))
+            min_radius = np.min(np.abs(turning_radius))
+
+            print(f"Average turning radius = {average_radius}")
+            print(f"Minimum turning radius = {min_radius}")
+
+            import pdb; pdb.set_trace()
+            if minimum_radius:
+                if min_radius < radius_threhold: 
+                    return True
+                else:
+                    return False
+            else:
+                if average_radius < radius_threhold: 
+                    return True
+                else:
+                    return False
+
+
+        ''' check the most-likely trajectory '''
+        scenario_id = data['scenario_id'][0]
+        eval_mask = data['agent']['category'] == 3
+        target_agent_traj = traj_refine_best[eval_mask][0, :, :2].cpu().numpy()
+        # out_of_drivable_area = check_out_of_map(scenario_id, data, target_agent_traj, visualize=True)
+        # small_turning_radius = check_small_turning_radius(target_agent_traj)
+
+
+        ''' generate a trajectory via a planner, check if it's out of map '''
+        # ''' example to use the parameterized motion planning model '''
+        from planning_model import motion_skill_model
+        import numpy as np
+        lon1 = 30
+        lat1 = 30
+        yaw1 = 30
+        v1 = 0
+        acc1 = 0
+        horizon = 60
+
+        current_a = 0
+        eval_mask = data['agent']['category'] == 3
+        current_v = np.sqrt(np.sum(np.square(data['agent']['position'][eval_mask][0,50:51,:2].cpu().numpy() - data['agent']['position'][eval_mask][0,49:50,:2].cpu().numpy())))
+        current_v = 0
+
+        planned_traj, lat1, yaw1, v1 = motion_skill_model(lon1, lat1, yaw1, v1, acc1, current_v, current_a, horizon)
+        planned_traj = planned_traj[1:, :2]
+        import pdb; pdb.set_trace()
+        out_of_drivable_area = check_out_of_map(scenario_id, data, planned_traj, visualize=True)
+        small_turning_radius = check_small_turning_radius(planned_traj)
+
+
+
+
         reg_loss_propose = self.reg_loss(traj_propose_best,
                                          gt[..., :self.output_dim + self.output_head]).sum(dim=-1) * reg_mask
         reg_loss_propose = reg_loss_propose.sum(dim=0) / reg_mask.sum(dim=0).clamp_(min=1)
