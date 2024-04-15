@@ -22,7 +22,7 @@ class PathParam():
         '''
         yaw0 = math.tan(yaw0/180*math.pi)
         yaw1 = math.tan(yaw1/180*math.pi)
-        self.Horizon = lon1 
+        self.Horizon = max(lon1, 0.2)
         self.lon_final = lon_final 
         self.a0 = lat0
         self.a1 = yaw0
@@ -37,6 +37,9 @@ class PathParam():
 
         self.lon = np.arange(self.Horizon*10) / 10
         self.lat = self.a0 + self.a1 * self.lon + self.a2 * (self.lon**2) + self.a3 * (self.lon**3)
+        # print(self.lon.shape)
+        # print(self.lat.shape)
+
 
         self.lon = np.expand_dims(self.lon,1)
         self.lat = np.expand_dims(self.lat,1)
