@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 import pytorch_lightning as pl
-import torch
+import torch, os
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.data import Batch
@@ -212,8 +212,6 @@ class QCNet(pl.LightningModule):
     def validation_step(self,
                         data,
                         batch_idx):
-        del batch_idx
-
         if isinstance(data, Batch):
             data['agent']['av_index'] += data['agent']['ptr'][:-1]
         reg_mask = data['agent']['predict_mask'][:, self.num_historical_steps:]
@@ -236,7 +234,7 @@ class QCNet(pl.LightningModule):
             wrap_angle(data['agent']['heading'][:, :self.num_historical_steps])
         
         pred = self(data)
-        if self.output_head:
+        if self.output_head:    # False
             traj_propose = torch.cat([pred['loc_propose_pos'][..., :self.output_dim],
                                       pred['loc_propose_head'],
                                       pred['scale_propose_pos'][..., :self.output_dim],
@@ -290,6 +288,230 @@ class QCNet(pl.LightningModule):
             traj_eval = torch.cat([traj_eval, head_eval.unsqueeze(-1)], dim=-1)
         pi_eval = F.softmax(pi[eval_mask], dim=-1)
         gt_eval = gt[eval_mask]
+
+
+
+        def check_out_of_map(scenario_id, data, target_agent_traj, car_heading_on_map, car_pos_on_map, visualize=False):
+            '''
+                target_agent_traj: shape [60, 2]
+            '''
+
+            from av2.map.map_api import ArgoverseStaticMap
+            from pathlib import Path
+            import matplotlib.pyplot as plt
+            import numpy as np
+            static_map_path = (Path(f"/home/letian/UofTCourse/Motion_Planning/project/val/raw/{scenario_id}") / f"log_map_archive_{scenario_id}.json")
+            static_map = ArgoverseStaticMap.from_json(static_map_path)
+
+            # create polygon        
+            paths = []
+            from matplotlib.path import Path
+            for drivable_area in static_map.vector_drivable_areas.values():
+                for polygon in [drivable_area.xyz]:
+                    paths.append(Path(polygon[:,:2]))
+
+            # transform the target_agent trajectory to the map coodinates
+            # cur_heading = data['agent']['heading'][eval_mask][:,50:51].item()
+            # cur_pos = data['agent']['position'][eval_mask][0,50:51,:2].cpu().numpy()
+            # import pdb; pdb.set_trace()
+            transform_matrix = np.array([
+                [np.cos(car_heading_on_map), -np.sin(car_heading_on_map)],
+                [np.sin(car_heading_on_map), np.cos(car_heading_on_map)]
+            ])
+            target_agent_traj_in_map = (transform_matrix @ target_agent_traj.T).T + car_pos_on_map
+
+            # check if the traj is out of drivable area
+            out_of_drivable_area = False
+            for one_point in target_agent_traj_in_map:
+                if not any(path.contains_point(one_point) for path in paths):
+                    out_of_drivable_area = True
+
+            # visualize
+            if visualize:
+                for drivable_area in static_map.vector_drivable_areas.values():
+                    for polygon in [drivable_area.xyz]:
+                        plt.fill(polygon[:, 0], polygon[:, 1], color='0')
+                plt.plot(target_agent_traj_in_map[:,0], target_agent_traj_in_map[:,1])
+                plt.show()
+                plt.close()
+                # import pdb; pdb.set_trace()
+
+            return out_of_drivable_area
+        def check_small_turning_radius(trajectory, radius_threhold=3.5, minimum_radius=True):
+            import numpy as np
+            def calculate_curvature(x, y):
+                dx_dt = np.gradient(x)
+                dy_dt = np.gradient(y)
+                d2x_dt2 = np.gradient(dx_dt)
+                d2y_dt2 = np.gradient(dy_dt)
+                curvature = (dx_dt * d2y_dt2 - dy_dt * d2x_dt2) / ((dx_dt ** 2 + dy_dt ** 2) ** 1.5)
+                return curvature
+            def calculate_turning_radius(curvature):
+                return 1.0 / curvature
+
+            # Example trajectory (replace with your actual trajectory)
+            # x = np.array([0, 1, 2, 3, 4])
+            # y = np.array([0, 1, 0, -1, 0])
+            x = trajectory[:, 0]
+            y = trajectory[:, 1]
+
+            # Calculate curvature
+            curvature = calculate_curvature(x, y)
+
+            # Calculate turning radius
+            turning_radius = calculate_turning_radius(curvature)
+
+            # Print turning radius at each point along the trajectory
+            # for i, radius in enumerate(turning_radius):
+            #     print(f"Point {i + 1}: Turning radius = {radius}")
+
+            # You can also calculate the average turning radius if needed
+            average_radius = np.mean(np.abs(turning_radius))
+            min_radius = np.min(np.abs(turning_radius))
+
+            # print(f"Average turning radius = {average_radius}")
+            # print(f"Minimum turning radius = {min_radius}")
+
+            # import pdb; pdb.set_trace()
+            if minimum_radius:
+                if min_radius < radius_threhold: 
+                    return True
+                else:
+                    return False
+            else:
+                if average_radius < radius_threhold: 
+                    return True
+                else:
+                    return False
+
+        # ''' check the most-likely trajectory '''
+        # scenario_id = data['scenario_id'][0]
+        # eval_mask = data['agent']['category'] == 3
+        # target_agent_traj = traj_refine_best[eval_mask][0, :, :2].cpu().numpy()
+        # # out_of_drivable_area = check_out_of_map(scenario_id, data, target_agent_traj, visualize=False)
+        # # small_turning_radius = check_small_turning_radius(target_agent_traj)
+
+
+        # ''' generate a trajectory via a planner, check if it's out of map '''
+        # # ''' example to use the parameterized motion planning model '''
+        # ood_switch_to_
+
+        from planning_model import motion_skill_model
+        import numpy as np
+        num_car = data['agent']['position'][eval_mask].shape[0]
+        num_modality = traj_eval.shape[1]
+        traj_eval_from_planner = torch.zeros_like(traj_eval)
+        pi_eval_from_planner = torch.ones_like(pi_eval)
+        traj_eval_ood_switch = torch.zeros_like(traj_eval)
+        pi_eval_ood_switch = torch.zeros_like(pi_eval)
+
+        ''' ood classifier: detect out-of-map and over-small-radius '''
+        ood_flag = torch.zeros(num_car)
+        for i in range(num_car):
+            # import pdb; pdb.set_trace()
+            scenario_id = data['scenario_id'][i]
+            eval_mask = data['agent']['category'] == 3
+
+            ood_count_for_one_car = 0
+            for modal_id in range(num_modality):
+                traj = traj_eval[i, modal_id][:, :2].cpu().numpy()
+                cur_heading_on_map = data['agent']['heading'][eval_mask][i,50:51].item()
+                cur_pos_on_map = data['agent']['position'][eval_mask][i,50:51,:2].cpu().numpy()
+                out_of_map = check_out_of_map(scenario_id, data, traj, cur_heading_on_map, cur_pos_on_map, visualize=False)
+                small_turning_radius = check_small_turning_radius(traj)
+                if out_of_map and small_turning_radius: ood_count_for_one_car += 1
+            
+            # half of the prediction is wrong
+            if ood_count_for_one_car >= modal_id / 2: ood_flag[i] = 1
+
+        ''' planning model '''
+        for i in range(num_car):
+            # current_v = 0
+            current_v = np.sqrt(np.sum(np.square(data['agent']['position'][eval_mask][i,50:51,:2].cpu().numpy() - data['agent']['position'][eval_mask][i,49:50,:2].cpu().numpy()))) * 10
+            # import pdb; pdb.set_trace()
+            current_a = 0
+            eval_mask = data['agent']['category'] == 3
+
+            horizon = 60
+            # planning_param_set = [[current_v * horizon / 10, 0, 0, current_v, 0],       # constant speed
+            #                      [4 * horizon / 10, 0, 0, 4, 0],                # low speed
+            #                      [8 * horizon / 10, 0, 0, 8, 0],                # medium speed
+            #                      [15 * horizon / 10, 0, 0, 12, 0],                # high speed
+            #                      [6 * horizon / 10, 6 * horizon / 10 / 2, 30, 6, 0],    # turn left
+            #                      [6 * horizon / 10, -6 * horizon / 10 / 2, -30, 6, 0],  # turn right
+            # ]
+
+            # k-means clustering from data
+            planning_param_set = [[ 2.3058292e+01,  2.3649578e+01,  6.9302147e+01,  3.8323116e+00, -9.1827745e+00],
+                                  [ 7.6472034e+00, -8.9843893e-01, -3.4655058e+00,  1.1500170e+00, -2.4785318e+00],
+                                  [ 4.6849834e+01, -2.2653617e-01, -2.4802389e-02,  3.8668215e+00, -9.4297333e+00],
+                                  [ 6.7266579e+01, -1.4482324e-01,  1.4982077e-01,  5.5946622e+00, -1.3733204e+01],
+                                  [ 2.6835514e+01, -3.7002566e+00, -1.0276335e+01,  2.4907744e+00, -5.7795033e+00],
+                                  [ 9.5007362e+01, -5.2219313e-01, -5.8250517e-02,  7.9314003e+00, -1.9205318e+01]]
+
+
+
+            for modal_id, (lon1, lat1, yaw1, v1, acc1) in enumerate(planning_param_set):
+                print(lon1, lat1, yaw1, v1, acc1, current_v, current_a, horizon)
+                planned_traj, lat1, yaw1, v1 = motion_skill_model(lon1, lat1, yaw1, v1, acc1, current_v, current_a, horizon)
+                planned_traj = torch.tensor(planned_traj[1:, :3]).unsqueeze(0)
+                traj_eval_from_planner[i, modal_id, :] = planned_traj
+                pi_eval_from_planner[i, modal_id] = 1 / num_modality
+
+
+                # traj = traj_eval[i, modal_id][:, :2].cpu().numpy()
+                scenario_id = data['scenario_id'][i]
+                cur_heading_on_map = data['agent']['heading'][eval_mask][i,50:51].item()
+                cur_pos_on_map = data['agent']['position'][eval_mask][i,50:51,:2].cpu().numpy()
+                # check_out_of_map(scenario_id, data, gt_eval[i,:,:2].cpu().numpy(), cur_heading_on_map, cur_pos_on_map, visualize=True)
+                # out_of_map = check_out_of_map(scenario_id, data, planned_traj[0,:,:2].cpu().numpy(), cur_heading_on_map, cur_pos_on_map, visualize=True)
+                # check_out_of_map(scenario_id, data, traj_eval[i,0,:,:2].cpu().numpy(), cur_heading_on_map, cur_pos_on_map, visualize=True)
+            # import pdb; pdb.set_trace()
+
+
+            # import pdb; pdb.set_trace()
+
+            if ood_flag[i]:
+                traj_eval_ood_switch[i] = traj_eval_from_planner[i]
+                pi_eval_ood_switch[i] = pi_eval_from_planner[i]
+            else:
+                traj_eval_ood_switch[i] = traj_eval[i]
+                pi_eval_ood_switch[i] = pi_eval[i]
+
+        '''' testing mode '''
+        test_ood_switch = True  # switch to planner when ood
+        test_planner = False
+        test_qcnet = False
+        if test_ood_switch:
+            pi_eval = pi_eval_ood_switch
+            traj_eval = traj_eval_ood_switch
+        elif test_planner:
+            pi_eval = pi_eval_from_planner
+            traj_eval = traj_eval_from_planner
+        elif test_qcnet:
+            pi_eval = pi_eval
+            traj_eval = traj_eval
+
+        ''' save target states, for clustering '''
+        # import numpy as np
+        # # lon1, lat1, yaw1, v1, acc1
+        # target_v = torch.sqrt(torch.sum(torch.square(gt_eval[:, -1, :2] - gt_eval[:, -2, :2]), 1)) * 10
+        # last_v = torch.sqrt(torch.sum(torch.square(gt_eval[:, -2, :2] - gt_eval[:, -3, :2]), 1)) * 10
+        # target_a = (target_v - last_v) * 10
+        # goal_state = torch.zeros(gt_eval.shape[0], 5)
+        # goal_state[:, :3] = gt_eval[:, -1]
+        # goal_state[:, 3] = target_v
+        # goal_state[:, 4] = target_a
+        # # import pdb; pdb.set_trace()
+        # file_path = 'target_state.npy'
+        # if os.path.exists(file_path):
+        #     old_data = np.load(file_path)
+        #     new_data = np.vstack((old_data, goal_state.numpy()))
+        #     np.save(file_path, new_data)
+        # else:
+        #     np.save(file_path, goal_state.numpy())
+        # print('eval-----------------')
+
 
         self.Brier.update(pred=traj_eval[..., :self.output_dim], target=gt_eval[..., :self.output_dim], prob=pi_eval,
                           valid_mask=valid_mask_eval)
