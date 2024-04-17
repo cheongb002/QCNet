@@ -153,7 +153,8 @@ class QCNet(pl.LightningModule):
         self.MR = MR(max_guesses=6)
 
         self.test_predictions = dict()
-        self.noise_std: float = 1.0
+        self.pos_std: float = 0.0
+        self.heading_std: float = 0.0
 
     def forward(self, data: HeteroData):
         scene_enc = self.encoder(data)
@@ -222,12 +223,17 @@ class QCNet(pl.LightningModule):
         for key in ('position', 'heading', 'velocity'):
             shape = list(data['agent'][key].shape)
             shape[1] = self.num_historical_steps
-            noise = torch.normal(mean=torch.zeros(shape), std=self.noise_std).to(self.device)
-            data['agent'][key][:, :self.num_historical_steps, ...] += noise
             if key == 'heading':
-                #? Wrap the angle to [-pi, pi] using wrap_angle
-                data['agent'][key][:, :self.num_historical_steps] = \
-                    wrap_angle(data['agent'][key][:, :self.num_historical_steps])
+                noise_std = self.heading_std
+            else:
+                noise_std = self.pos_std
+
+            noise = torch.normal(mean=torch.zeros(shape), std=noise_std).to(self.device)
+            data['agent'][key][:, :self.num_historical_steps, ...] += noise
+
+        #? Wrap the angle to [-pi, pi] using wrap_angle
+        data['agent']['heading'][:, :self.num_historical_steps] = \
+            wrap_angle(data['agent']['heading'][:, :self.num_historical_steps])
         
         pred = self(data)
         if self.output_head:
